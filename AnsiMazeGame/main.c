@@ -12,9 +12,13 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdbool.h>
+
 #define SIZE 21
 #define MAX 101
-static struct termios stored_settings;
+
+static struct termios stored_settings0;
+static struct termios stored_settings1;
+bool isFinished = false;
 int step=0,Tnum=0;
 char trace[MAX];
 bool t_history[MAX][MAX]={0};
@@ -58,17 +62,23 @@ int maze2[SIZE][SIZE]={
     1, 0, 1, 0, 0, 0, 2, 2, 1, 0, 1, 3, 0, 0, 0, 0, 0, 0, 0, 0, 1,
     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
 };
-void set_keypress(void) {//启用非icanon输入，不需要回车和等待时间就可以交互
+void clearScreen(void);
+
+void initKeyPress(void) {//启用非icanon输入，不需要回车和等待时间就可以交互
     struct termios new_settings;
-    tcgetattr(0,&stored_settings);
-    new_settings=stored_settings;
+    tcgetattr(0,&stored_settings0);
+    new_settings=stored_settings0;
     new_settings.c_lflag&=(~ICANON);
     new_settings.c_cc[VTIME]=0;
     new_settings.c_cc[VMIN]=1;
     tcsetattr(0,TCSANOW,&new_settings);
+    stored_settings1 = new_settings;
 }
-void reset_keypress(void) {
-    tcsetattr(0,TCSANOW,&stored_settings);
+void enterInteractMode(void) {
+    tcsetattr(0,TCSANOW,&stored_settings1);
+}
+void enterLegacyMode(void) {
+    tcsetattr(0,TCSANOW,&stored_settings0);
 }
 void printMaze(int heroRow,int heroCol) {
     for(int i=0;i<SIZE;i++) {
@@ -108,7 +118,9 @@ void moveHero(char direction,int *heroRow,int *heroCol) {
 }
 void settlement(void){
     int i;
-    printf("\033[H\033[J");
+    isFinished = true;
+    clearScreen();
+
     printf("\n行动路径: ");
     for(i=0;i<step;i++)printf("%c",trace[i]);
     printf("\n消耗的体力: ");
@@ -118,21 +130,24 @@ void settlement(void){
 void maze2_mode1(void) {//实时模式
     int heroRow=1,heroCol=1;Tnum=0;step=0;
     char input;
-    set_keypress();
+    enterInteractMode();
     while(1) {
         
-        printf("\033[H\033[J");
+        clearScreen();
+
         printMaze(heroRow,heroCol);
         printf("请输入WASD控制Y移动，Q退出：");
         input=getchar();
         input=toupper(input);
         if(input=='Q'){
             printf("用户选择退出。进入结算\n");
-            settlement();reset_keypress();return;
+            settlement();
+            return;
         }
         if(Tnum==2){
             printf("恭喜找到所有宝藏！进入结算\n");
-            settlement();reset_keypress();return;
+            settlement();
+            return;
         }
         moveHero(input,&heroRow,&heroCol);
     }
@@ -141,12 +156,12 @@ void maze2_mode1(void) {//实时模式
 void maze2_mode2(void) {//编程模式
     int heroRow=1,heroCol=1,i;Tnum=0;step=0;
     char input[100];
-    //set_keypress();
     printMaze(heroRow,heroCol);
     int n;//编程模式下一次性输入的指令的长度
     while(1){
-        printf("\033[H\033[J");
+        clearScreen();
         printMaze(heroRow,heroCol);
+        enterLegacyMode();
         printf("请一次性输入您的指令（WSAD对应上下左右，Q退出），回车结束");
         fgets(input, sizeof(input), stdin);
         n=(int)strlen(input);
@@ -159,26 +174,35 @@ void maze2_mode2(void) {//编程模式
             }
             if(x!='W'&&x!='A'&&x!='S'&&x!='D'){
                 printf("输入有误。进入结算\n");
-                settlement();return;
+                settlement();
+                return;
             }
             //printf("%d*\n",Tnum);
             
             if(Tnum==2){
                 printf("恭喜找到所有宝藏！进入结算\n");
-                settlement();return;
+                settlement();
+                return;
             }
             moveHero(x,&heroRow,&heroCol);
+            clearScreen();
+            printMaze(heroRow,heroCol);
+            sleep(1);
         }
     }
 }
  
+void clearScreen(void) {
+    printf("\033[H\033[J");
+}
 
 int main(void) {
     char move;
     int y=0;
-    set_keypress();
+    initKeyPress();
     while(1) {
-        printf("\033[H\033[J");
+        enterInteractMode();
+        clearScreen();
         printf("\033[%d;%dH>",y+1,1);
         printf("\033[1;4H开始第一关");
         printf("\033[2;4H开始第二关");
@@ -191,15 +215,15 @@ int main(void) {
         if(move=='\n'||move=='\t') {
             if(y==1) {
                 while(1){
-                    set_keypress();
-                    printf("\033[H\033[J");
+                    isFinished = false;
+                    enterInteractMode();
+                    clearScreen();
                     printf("\033[%d;%dH>",y+1,1);
                     printf("\033[1;4H 0:实时模式");
                     printf("\033[2;4H 1:编程模式");
                     printf("\033[3;4H 退出");
                     printf("\033[5;1HW,S 控制方法：按W向上移动，按S向下移动，按<Enter>选择。");
                     move=getchar();
-                    reset_keypress();
                     if(move=='Q'||move=='q')break;
                     if((move=='W'||move=='w')&&y>0)y--;
                     if((move=='S'||move=='s')&&y<2)y++;
@@ -207,6 +231,11 @@ int main(void) {
                         if(y==0)maze2_mode1();
                         if(y==1)maze2_mode2();
                         if(y==2)break;
+                    }
+                    enterInteractMode();
+                    if (isFinished) {
+                        printf("\npress any key to continue...\n");
+                        getchar();
                     }
                 }
                 
@@ -216,7 +245,7 @@ int main(void) {
         }
         //move=toupper(move);
     }
-    reset_keypress();
+    enterLegacyMode();
     return 0;
 }
 
